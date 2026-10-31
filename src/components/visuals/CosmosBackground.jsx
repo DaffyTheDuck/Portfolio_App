@@ -310,6 +310,7 @@ export function CosmosBackground({ hold = null, theme = "dark" }) {
     const sunLight = new THREE.PointLight(0xffe2b8, 40, 18, 1.6);
     sun.add(sunLight);
 
+    const orbitLines = [];
     const miniPlanets = WAYPOINTS.slice(1).map((wp, i) => {
       const size = 0.2 + (i % 3 === 0 ? 0.07 : 0.035);
       const mesh = new THREE.Mesh(
@@ -321,6 +322,7 @@ export function CosmosBackground({ hold = null, theme = "dark" }) {
       const pts = [];
       for (let a = 0; a <= 96; a++) pts.push(new THREE.Vector3(Math.cos((a / 96) * 6.2832) * radius, 0, Math.sin((a / 96) * 6.2832) * radius));
       const orbit = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: new THREE.Color(wp.colors[1]), transparent: true, opacity: 0.5 }));
+      orbitLines.push({ material: orbit.material, base: new THREE.Color(wp.colors[1]) });
       system.add(orbit);
       system.add(mesh);
       return { mesh, radius, speed: 0.55 / Math.pow(radius, 1.5), angle: i * 2.399 };
@@ -343,7 +345,29 @@ export function CosmosBackground({ hold = null, theme = "dark" }) {
         c.sprite.material.needsUpdate = true;
       });
       if (bloom) bloom.enabled = !light;
-      ambient.intensity = light ? 1.15 : 0.7;
+      ambient.intensity = light ? 0.95 : 0.7;
+
+      // hero system: additive glows and pale colours vanish on a light sky, so use opaque, deeper ones
+      orbitLines.forEach(({ material, base }) => {
+        material.color.copy(base);
+        if (light) material.color.multiplyScalar(0.55);
+        material.opacity = light ? 0.85 : 0.5;
+      });
+      sun.material.color.set(light ? new THREE.Color(1.0, 0.8, 0.4) : new THREE.Color(1.9, 1.6, 1.2));
+      sunGlow.material.blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
+      sunGlow.material.color.set(light ? "#ff9a3c" : "#ffffff");
+      sunGlow.material.needsUpdate = true;
+      sunGlow.userData.base = light ? 0.55 : 0.85;
+      scene.traverse((o) => {
+        const m = o.material;
+        if (m && m.isShaderMaterial && m.uniforms.uColor) {
+          if (!m.userData.base) m.userData.base = m.uniforms.uColor.value.clone();
+          m.uniforms.uColor.value.copy(m.userData.base);
+          if (light) m.uniforms.uColor.value.multiplyScalar(0.55);
+          m.blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
+          m.needsUpdate = true;
+        }
+      });
       if (reducedMotion) step(0, true);
     }
     applyThemeRef.current = applyTheme;
@@ -457,7 +481,7 @@ export function CosmosBackground({ hold = null, theme = "dark" }) {
           p.mesh.rotation.y += adt * 0.6;
         });
         sun.rotation.y += adt * 0.1;
-        sunGlow.material.opacity = 0.8 + Math.sin(elapsed * 1.6) * 0.1;
+        sunGlow.material.opacity = (sunGlow.userData.base || 0.85) + Math.sin(elapsed * 1.6) * 0.08;
         clouds.forEach((c) => {
           // only clouds near the camera are drawn; the rest would just cost fill rate
           const dz = camera.position.z - c.sprite.position.z;
