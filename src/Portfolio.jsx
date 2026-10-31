@@ -1,42 +1,71 @@
-import { useState, useEffect } from "react";
-import { Mail, Phone, Github, Linkedin, Download, ArrowDown, Volume2, VolumeX, BookOpen, Gamepad2, Map } from "lucide-react";
-import { PROFILE, ABOUT, NAV_ITEMS, EXPERIENCE, PROJECTS, SKILL_GROUPS, VOLUNTEERING, EDUCATION, WAYPOINTS, SECTION_IDS } from "./data/content";
+import { useState, useEffect, useRef } from "react";
+import { Mail, Github, Linkedin, Download, ArrowDown, ArrowUp, ArrowRight, Volume2, VolumeX, BookOpen, Gamepad2, Map, Sun, Moon, Zap, ZapOff } from "lucide-react";
+import { PROFILE, AVAILABILITY, HERO_STATS, ABOUT, NAV_ITEMS, EXPERIENCES, PROJECTS, SKILL_GROUPS, VOLUNTEERING, EDUCATION, WAYPOINTS, SECTION_IDS } from "./data/content";
 import { useSpaceAudio } from "./hooks/useSpaceAudio";
 import { Reveal } from "./components/ui/Reveal";
 import { TypewriterText } from "./components/ui/TypewriterText";
 import { TiltCard } from "./components/ui/TiltCard";
 import { RevealField } from "./components/ui/RevealField";
-import { ParallaxStars } from "./components/visuals/ParallaxStars";
-import { SpaceField } from "./components/visuals/SpaceField";
-import { SolarSystem3D } from "./components/visuals/SolarSystem3D";
 import { SystemMapModal } from "./components/layout/SystemMapModal";
 import { CursorTrail } from "./components/visuals/CursorTrail";
 import { BootOverlay } from "./components/visuals/BootOverlay";
 import { WarpOverlay } from "./components/layout/WarpOverlay";
 import { OrbitHUD } from "./components/layout/OrbitHUD";
-import { SectionPlanet } from "./components/layout/SectionPlanet";
 import { StarMapRail } from "./components/layout/StarMapRail";
-import { MissionObjective } from "./components/layout/MissionObjective";
+import { DetailPage } from "./components/pages/DetailPage";
+import { NotFound } from "./components/pages/NotFound";
+import { CountUp } from "./components/ui/CountUp";
+import { Toast } from "./components/ui/Toast";
+import { usePrefs, hasSeenIntro, markIntroSeen } from "./hooks/usePrefs";
+import { WorkPeek, ProjectPeek } from "./components/pages/Peek";
+import { useHashRoute } from "./hooks/useHashRoute";
 import "./index.css";
+
+const DEFAULT_TITLE = document.title;
 
 export default function Portfolio() {
   const [activeId, setActiveId] = useState("hero");
   const [progress, setProgress] = useState(0);
+  const progressBar = useRef(null);
   const [warping, setWarping] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
-  const [booting, setBooting] = useState(true);
+  const seenBefore = useRef(hasSeenIntro()).current;
+  const { theme, toggleTheme, effectsOff, toggleEffects, reduce } = usePrefs();
+  const [booting, setBooting] = useState(!seenBefore);
+  const [navHidden, setNavHidden] = useState(false);
+  const [showTop, setShowTop] = useState(false);
+  const [toast, setToast] = useState(null);
   const [bootExiting, setBootExiting] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 760);
 
-  useEffect(() => {
-    function handleResize() {
-      setIsMobile(window.innerWidth < 760);
-    }
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  const [Cosmos, setCosmos] = useState(null);
   const { playBlip, playWhoosh, unlock } = useSpaceAudio(soundOn);
+
+  const toastTimer = useRef(null);
+  function showToast(message) {
+    setToast(message);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2000);
+  }
+
+  // The 3D scene is a separate chunk, loaded after first paint, and skipped on data-saver connections
+  // and when the visitor turns effects off.
+  useEffect(() => {
+    const conn = navigator.connection;
+    if (effectsOff || (conn && conn.saveData)) return;
+    let cancelled = false;
+    const load = () =>
+      import("./components/visuals/CosmosBackground").then((m) => {
+        if (!cancelled) setCosmos(() => m.CosmosBackground);
+      });
+    const useIdle = "requestIdleCallback" in window;
+    const id = useIdle ? window.requestIdleCallback(load, { timeout: 1500 }) : window.setTimeout(load, 300);
+    return () => {
+      cancelled = true;
+      if (useIdle) window.cancelIdleCallback(id);
+      else window.clearTimeout(id);
+    };
+  }, [effectsOff]);
 
   useEffect(() => {
     const svg =
@@ -64,8 +93,7 @@ export default function Portfolio() {
   }, []);
 
   useEffect(() => {
-    const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reducedMotion) {
+    if (reduce || seenBefore) {
       setBooting(false);
       return;
     }
@@ -91,13 +119,23 @@ export default function Portfolio() {
 
   useEffect(() => {
     let frame;
+    let lastY = window.scrollY;
     function onScroll() {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const doc = document.documentElement;
         const scrollTop = window.scrollY || doc.scrollTop;
         const height = doc.scrollHeight - doc.clientHeight;
-        setProgress(height > 0 ? Math.min(100, (scrollTop / height) * 100) : 0);
+        const pct = height > 0 ? Math.min(100, (scrollTop / height) * 100) : 0;
+        // the bar is moved directly; React state (the star-map ship) only changes in whole percent steps
+        if (progressBar.current) progressBar.current.style.width = `${pct}%`;
+        setProgress(Math.round(pct));
+        const delta = scrollTop - lastY;
+        if (Math.abs(delta) > 6) {
+          setNavHidden(scrollTop > 140 && delta > 0);
+          lastY = scrollTop;
+        }
+        setShowTop(scrollTop > 900);
       });
     }
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -108,18 +146,55 @@ export default function Portfolio() {
     };
   }, []);
 
+  const { route: rawRoute, savedScroll, goHome } = useHashRoute();
+  const detailItem = rawRoute ? (rawRoute.section === "work" ? EXPERIENCES : PROJECTS).find((x) => x.slug === rawRoute.slug) : null;
+  const route = detailItem ? rawRoute : null;
+  const notFound = !!rawRoute && !detailItem;
+  const pendingScroll = useRef(null);
+  const firstRoute = useRef(true);
+
+  useEffect(() => {
+    if (firstRoute.current) {
+      firstRoute.current = false;
+      if (route) setActiveId(route.section);
+      return;
+    }
+    if (route) {
+      setActiveId(route.section);
+      window.scrollTo(0, 0);
+    } else if (pendingScroll.current) {
+      const id = pendingScroll.current;
+      pendingScroll.current = null;
+      window.requestAnimationFrame(() => scrollToSection(id));
+    } else {
+      window.requestAnimationFrame(() => window.scrollTo(0, savedScroll.current));
+    }
+  }, [route]);
+
+  useEffect(() => {
+    if (!route) {
+      document.title = DEFAULT_TITLE;
+      return;
+    }
+    document.title = `${route.section === "work" ? detailItem.role : detailItem.name} | Mihir Bhave`;
+  }, [route, detailItem]);
+
   function scrollToSection(id) {
     const el = document.getElementById(id);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (el) el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
   }
 
   function navigateTo(id) {
-    const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!reducedMotion) {
+    if (!reduce) {
       setWarping(true);
       window.setTimeout(() => setWarping(false), 650);
     }
     playWhoosh();
+    if (route) {
+      pendingScroll.current = id;
+      goHome();
+      return;
+    }
     scrollToSection(id);
   }
 
@@ -129,24 +204,27 @@ export default function Portfolio() {
   }
 
   return (
-    <div className="pf-root">
-      <ParallaxStars />
+    <div className="pf-root" data-active={activeId} data-theme={theme} data-reduce={reduce ? "true" : "false"}>
+      <a className="pf-skip" href="#main">
+        Skip to content
+      </a>
+      {Cosmos && !effectsOff && <Cosmos theme={theme} hold={route ? SECTION_IDS.indexOf(route.section) : null} />}
 
       {booting && <BootOverlay exiting={bootExiting} />}
-      <CursorTrail />
+      {!reduce && <CursorTrail />}
       <OrbitHUD activeId={activeId} />
 
-      <div className="pf-progress" style={{ width: `${progress}%` }} />
-      {warping && <WarpOverlay />}
+      <div className="pf-progress" ref={progressBar} />
+      {warping && !reduce && <WarpOverlay />}
       <StarMapRail activeId={activeId} progress={progress} onNavigate={navigateTo} onHover={playBlip} />
 
-      <nav className="pf-nav">
+      <nav className={`pf-nav ${navHidden ? "pf-nav-hidden" : ""}`} aria-label="Primary">
         <button type="button" className="pf-logo" onClick={() => navigateTo("hero")} aria-label="Scroll to top">
           MB
         </button>
         <div className="pf-nav-links">
           {NAV_ITEMS.map((item) => (
-            <button key={item.id} type="button" className={`pf-nav-link ${activeId === item.id ? "pf-nav-link-active" : ""}`} onClick={() => navigateTo(item.id)} onMouseEnter={playBlip}>
+            <button key={item.id} type="button" aria-current={activeId === item.id ? "true" : undefined} className={`pf-nav-link ${activeId === item.id ? "pf-nav-link-active" : ""}`} onClick={() => navigateTo(item.id)} onMouseEnter={playBlip}>
               {item.label}
             </button>
           ))}
@@ -154,6 +232,12 @@ export default function Portfolio() {
         <div className="pf-nav-tools">
           <button type="button" className="pf-nav-tool pf-nav-tool-map" onClick={() => setMapOpen(true)} aria-label="Open map" title="Open map">
             <Map size={16} />
+          </button>
+          <button type="button" className="pf-nav-tool" onClick={toggleTheme} aria-label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"} title={theme === "light" ? "Dark theme" : "Light theme"}>
+            {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+          </button>
+          <button type="button" className="pf-nav-tool" onClick={toggleEffects} aria-pressed={effectsOff} aria-label={effectsOff ? "Turn effects on" : "Reduce effects"} title={effectsOff ? "Effects off (click to turn on)" : "Reduce effects"}>
+            {effectsOff ? <ZapOff size={16} /> : <Zap size={16} />}
           </button>
           <button type="button" className="pf-nav-tool" onClick={toggleSound} aria-label={soundOn ? "Mute sound" : "Enable sound"} title={soundOn ? "Mute sound" : "Enable sound"}>
             {soundOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
@@ -163,25 +247,29 @@ export default function Portfolio() {
 
       {mapOpen && <SystemMapModal activeId={activeId} onNavigate={navigateTo} onClose={() => setMapOpen(false)} />}
 
-      <main>
+      <main id="main" tabIndex={-1} hidden={!!rawRoute}>
         <section id="hero" className="pf-hero">
-          {!isMobile && (
-            <div className="pf-hero-visual">
-              <SpaceField />
-              <SolarSystem3D onNavigate={navigateTo} />
-            </div>
-          )}
           <div className="pf-hero-content">
             <span className="pf-transmission-scan" aria-hidden="true" />
             <p className="pf-transmission-label">
               <span className="pf-transmission-dot" />
               Incoming transmission
             </p>
-            <p className="pf-eyebrow">Software Developer · Mumbai, India</p>
+            <p className="pf-eyebrow">{PROFILE.title} · {PROFILE.location}</p>
             <h1 className="pf-name">Mihir Bhave</h1>
             <p className="pf-subhead">
-              <TypewriterText text="I work on compliance tooling, large-scale data migrations, and production systems, currently at Cere Labs in Mumbai." startDelay={1300} />
+              <TypewriterText instant={reduce || seenBefore} onDone={markIntroSeen} text="I build and run production systems, with a background in compliance tooling and large-scale data migrations. Currently at Trinamix, working on Documantra." startDelay={1300} />
             </p>
+            <ul className="pf-hero-stats" aria-label="Highlights">
+              {HERO_STATS.map((st) => (
+                <li key={st.label}>
+                  <span className={`pf-hero-stat-num ${st.compact ? "pf-hero-stat-num-compact" : ""}`}>
+                    <CountUp value={st.num} instant={reduce} />
+                  </span>
+                  <span className="pf-hero-stat-label">{st.label}</span>
+                </li>
+              ))}
+            </ul>
             <div className="pf-hero-actions">
               <button type="button" className="pf-btn pf-btn-primary" onClick={() => navigateTo("work")}>
                 See the work
@@ -189,20 +277,34 @@ export default function Portfolio() {
               <button type="button" className="pf-btn pf-btn-ghost" onClick={() => navigateTo("contact")}>
                 Get in touch
               </button>
+              <a className="pf-btn pf-btn-ghost" href="/resume.pdf" download="Mihir_Bhave_Resume.pdf">
+                <Download size={16} /> Resume
+              </a>
             </div>
+            <a
+              className="pf-availability"
+              href="#contact"
+              onClick={(e) => {
+                e.preventDefault();
+                navigateTo("contact");
+              }}
+            >
+              <span className="pf-availability-dot" />
+              {AVAILABILITY}
+              <ArrowRight size={14} />
+            </a>
           </div>
           <button type="button" className="pf-scroll-hint" onClick={() => navigateTo("work")} aria-label="Scroll down">
             <ArrowDown size={16} />
           </button>
         </section>
 
-        <section id="about" className="pf-section">
+        <section id="about" aria-labelledby="about-title" data-sec="about" className="pf-section pf-side-left">
           <Reveal className="pf-section-head">
             <div>
               <p className="pf-eyebrow">About</p>
-              <h2 className="pf-h2">Not just the job title</h2>
+              <h2 className="pf-h2" id="about-title">Not just the job title</h2>
             </div>
-            <SectionPlanet colors={["#FFE3B0", "#F2B872", "#7A4A1A"]} glow texStyle="glow" active={activeId === "about"} />
           </Reveal>
           <Reveal className="pf-about-grid">
             <div className="pf-about-text">
@@ -224,110 +326,44 @@ export default function Portfolio() {
           </Reveal>
         </section>
 
-        <section id="work" className="pf-section">
+        <section id="work" aria-labelledby="work-title" data-sec="work" className="pf-section pf-side-right">
           <Reveal className="pf-section-head">
             <div>
               <p className="pf-eyebrow">Experience</p>
-              <h2 className="pf-h2">Where the work happens</h2>
+              <h2 className="pf-h2" id="work-title">Where the work happens</h2>
             </div>
-            <SectionPlanet colors={WAYPOINTS[1].colors} ring={WAYPOINTS[1].ring} texStyle="cratered" active={activeId === "work"} />
           </Reveal>
-          <Reveal className="pf-job">
-            <div className="pf-job-header">
-              <div>
-                <h3 className="pf-job-role">{EXPERIENCE.role}</h3>
-                <p className="pf-job-org">
-                  {EXPERIENCE.org} · {EXPERIENCE.location}
-                </p>
-              </div>
-            </div>
-
-            <div className="pf-mission-status">
-              <span className="pf-mission-status-left">
-                <span className="pf-mission-dot" />
-                <span className="pf-mission-active">Active</span>
-                <span className="pf-mission-sep">·</span>
-                <span>
-                  Day {Math.max(0, Math.floor((Date.now() - new Date(2025, 6, 1).getTime()) / 86400000))} in role
-                </span>
-              </span>
-              <span className="pf-mission-status-right">
-                {EXPERIENCE.start} — {EXPERIENCE.end}
-              </span>
-            </div>
-
-            <div className="pf-mission-stats">
-              {EXPERIENCE.overallStats.map((s) => (
-                <div className="pf-mission-stat" key={s.label}>
-                  <span className={`pf-mission-stat-num ${s.compact ? "pf-mission-stat-num-compact" : ""}`}>{s.num}</span>
-                  <span className="pf-mission-stat-label">{s.label}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="pf-mission-list">
-              {EXPERIENCE.highlights.map((h) => (
-                <MissionObjective
-                  key={h.title}
-                  title={h.title}
-                  codename={h.codename}
-                  detail={h.detail}
-                  stats={h.stats}
-                  techStack={h.techStack}
-                />
-              ))}
-            </div>
-
-            <p className="pf-work-note">
-              <span className="pf-work-note-tag">Log:</span> {EXPERIENCE.note}
-            </p>
-          </Reveal>
-        </section>
-
-        <section id="projects" className="pf-section">
-          <Reveal className="pf-section-head">
-            <div>
-              <p className="pf-eyebrow">Projects</p>
-              <h2 className="pf-h2">Something built, not just listed</h2>
-            </div>
-            <SectionPlanet colors={WAYPOINTS[2].colors} ring={WAYPOINTS[2].ring} texStyle="bands" active={activeId === "projects"} />
-          </Reveal>
-          {PROJECTS.map((p, i) => (
-            <Reveal key={p.name} delay={i * 80}>
-              <TiltCard className="pf-project-card">
-                <div className="pf-project-head">
-                  <h3 className="pf-project-name">{p.name}</h3>
-                  <p className="pf-project-tagline">{p.tagline}</p>
-                </div>
-                <p className="pf-project-desc">{p.description}</p>
-                <ul className="pf-bullets">
-                  {p.bullets.map((b, bi) => (
-                    <li key={bi}>{b}</li>
-                  ))}
-                </ul>
-                <div className="pf-tags">
-                  {p.tags.map((t) => (
-                    <span key={t} className="pf-tag-pill">
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              </TiltCard>
+          {EXPERIENCES.map((job, i) => (
+            <Reveal key={job.slug} delay={i * 80}>
+              <WorkPeek job={job} />
             </Reveal>
           ))}
         </section>
 
-        <section id="skills" className="pf-section">
+        <section id="projects" aria-labelledby="projects-title" data-sec="projects" className="pf-section pf-side-left">
+          <Reveal className="pf-section-head">
+            <div>
+              <p className="pf-eyebrow">Projects</p>
+              <h2 className="pf-h2" id="projects-title">Something built, not just listed</h2>
+            </div>
+          </Reveal>
+          {PROJECTS.map((p, i) => (
+            <Reveal key={p.slug} delay={i * 80}>
+              <ProjectPeek project={p} />
+            </Reveal>
+          ))}
+        </section>
+
+        <section id="skills" aria-labelledby="skills-title" data-sec="skills" className="pf-section pf-side-right">
           <Reveal className="pf-section-head">
             <div>
               <p className="pf-eyebrow">Skills</p>
-              <h2 className="pf-h2">Tools of the trade</h2>
+              <h2 className="pf-h2" id="skills-title">Tools of the trade</h2>
             </div>
-            <SectionPlanet colors={WAYPOINTS[3].colors} ring={WAYPOINTS[3].ring} moons={WAYPOINTS[3].moons || 0} texStyle="swirl" active={activeId === "skills"} />
           </Reveal>
-          <div className="pf-skill-groups">
-            {SKILL_GROUPS.map((group, gi) => (
-              <Reveal key={group.label} delay={gi * 90} className="pf-skill-group">
+          <Reveal className="pf-skill-board">
+            {SKILL_GROUPS.map((group) => (
+              <div key={group.label} className="pf-skill-row">
                 <p className="pf-skill-label">{group.label}</p>
                 <div className="pf-tags">
                   {group.items.map((item) => (
@@ -336,18 +372,17 @@ export default function Portfolio() {
                     </span>
                   ))}
                 </div>
-              </Reveal>
+              </div>
             ))}
-          </div>
+          </Reveal>
         </section>
 
-        <section id="volunteering" className="pf-section">
+        <section id="volunteering" aria-labelledby="volunteering-title" data-sec="volunteering" className="pf-section pf-side-left">
           <Reveal className="pf-section-head">
             <div>
               <p className="pf-eyebrow">Volunteering</p>
-              <h2 className="pf-h2">Outside the day job</h2>
+              <h2 className="pf-h2" id="volunteering-title">Outside the day job</h2>
             </div>
-            <SectionPlanet colors={WAYPOINTS[4].colors} ring={WAYPOINTS[4].ring} moons={WAYPOINTS[4].moons || 0} texStyle="cratered" active={activeId === "volunteering"} />
           </Reveal>
           <div className="pf-timeline">
             {VOLUNTEERING.map((v, i) => (
@@ -364,13 +399,12 @@ export default function Portfolio() {
           </div>
         </section>
 
-        <section id="education" className="pf-section">
+        <section id="education" aria-labelledby="education-title" data-sec="education" className="pf-section pf-side-right">
           <Reveal className="pf-section-head">
             <div>
               <p className="pf-eyebrow">Education</p>
-              <h2 className="pf-h2">How it started</h2>
+              <h2 className="pf-h2" id="education-title">How it started</h2>
             </div>
-            <SectionPlanet colors={WAYPOINTS[5].colors} ring={WAYPOINTS[5].ring} texStyle="bands" active={activeId === "education"} />
           </Reveal>
           <div className="pf-timeline">
             {EDUCATION.map((ed, i) => (
@@ -388,18 +422,16 @@ export default function Portfolio() {
           </div>
         </section>
 
-        <section id="contact" className="pf-section pf-contact-section">
+        <section id="contact" aria-labelledby="contact-title" data-sec="contact" className="pf-section pf-side-left pf-contact-section">
           <Reveal className="pf-section-head">
             <div>
               <p className="pf-eyebrow">Contact</p>
-              <h2 className="pf-h2">Say hello</h2>
+              <h2 className="pf-h2" id="contact-title">Say hello</h2>
               <p className="pf-contact-sub">Reach out directly, or grab the resume.</p>
             </div>
-            <SectionPlanet colors={WAYPOINTS[6].colors} ring={WAYPOINTS[6].ring} glow={WAYPOINTS[6].glow} pulse={WAYPOINTS[6].pulse} texStyle="glow" active={activeId === "contact"} />
           </Reveal>
           <Reveal className="pf-contact-grid">
-            <RevealField icon={<Mail size={16} />} label="Email" value={PROFILE.email} href={`mailto:${PROFILE.email}`} />
-            <RevealField icon={<Phone size={16} />} label="Phone" value={PROFILE.phone} href={`tel:${PROFILE.phone.replace(/\s+/g, "")}`} />
+            <RevealField onCopied={showToast} icon={<Mail size={16} />} label="Email" value={PROFILE.email} href={`mailto:${PROFILE.email}`} />
             <a className="pf-social-link" href={PROFILE.linkedin} target="_blank" rel="noopener noreferrer">
               <Linkedin size={16} /> LinkedIn
             </a>
@@ -412,6 +444,14 @@ export default function Portfolio() {
           </Reveal>
         </section>
       </main>
+
+      {route && <DetailPage section={route.section} item={detailItem} list={route.section === "work" ? EXPERIENCES : PROJECTS} onBack={goHome} onNavigate={navigateTo} />}
+      {notFound && <NotFound onBack={goHome} />}
+
+      <button type="button" className={`pf-totop ${showTop ? "pf-totop-show" : ""}`} onClick={() => window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" })} aria-label="Back to top" tabIndex={showTop ? 0 : -1}>
+        <ArrowUp size={18} />
+      </button>
+      <Toast message={toast} />
 
       <footer className="pf-footer">
         <p>Built by Mihir Bhave · {new Date().getFullYear()}</p>

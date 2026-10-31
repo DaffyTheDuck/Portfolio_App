@@ -1,12 +1,11 @@
 import { useState, useEffect } from "react";
 
-export function TypewriterText({ text, speed = 18, startDelay = 400 }) {
+export function TypewriterText({ text, speed = 18, startDelay = 400, instant = false, onDone }) {
   const [count, setCount] = useState(0);
   const [showCursor, setShowCursor] = useState(true);
 
   useEffect(() => {
-    const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reducedMotion) {
+    if (instant) {
       setCount(text.length);
       setShowCursor(false);
       return;
@@ -20,6 +19,7 @@ export function TypewriterText({ text, speed = 18, startDelay = 400 }) {
         setCount(i);
         if (i >= text.length) {
           clearInterval(intervalId);
+          if (onDone) onDone();
           endTimer = setTimeout(() => setShowCursor(false), 1200);
         }
       }, speed);
@@ -29,12 +29,15 @@ export function TypewriterText({ text, speed = 18, startDelay = 400 }) {
       clearTimeout(endTimer);
       if (intervalId) clearInterval(intervalId);
     };
-  }, [text, speed, startDelay]);
+  }, [text, speed, startDelay, instant]);
 
   return (
     <>
-      {text.slice(0, count)}
-      {showCursor && <span className="pf-typewriter-cursor">▍</span>}
+      <span className="pf-sr-only">{text}</span>
+      <span aria-hidden="true">
+        {text.slice(0, count)}
+        {showCursor && <span className="pf-typewriter-cursor">▍</span>}
+      </span>
     </>
   );
 }

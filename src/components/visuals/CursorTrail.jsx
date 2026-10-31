@@ -55,7 +55,7 @@ export function CursorTrail() {
         const alpha = (1 - t) * 0.65;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size * (1 - t * 0.4), 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(242,184,114,${alpha})`;
+        ctx.fillStyle = `hsla(${(30 + p.maxLife * 6 + t * 120) % 360},90%,72%,${alpha})`;
         ctx.fill();
       });
       frameId = requestAnimationFrame(draw);
